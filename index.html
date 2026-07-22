@@ -10,12 +10,13 @@ content="width=device-width, initial-scale=1.0">
 
 
 <title>
-iPhone ONNX AI Point Detection
+AI藥品顆數辨識
 </title>
 
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js">
 </script>
+
 
 
 <style>
@@ -24,10 +25,14 @@ iPhone ONNX AI Point Detection
 body{
 
     margin:0;
-    background:black;
+
+    background:#000;
+
     color:white;
-    text-align:center;
+
     font-family:sans-serif;
+
+    text-align:center;
 
 }
 
@@ -57,15 +62,15 @@ video{
 
     position:absolute;
 
-    left:0;
-
-    top:0;
-
     width:100%;
 
     height:100%;
 
     object-fit:cover;
+
+    left:0;
+
+    top:0;
 
 }
 
@@ -75,13 +80,23 @@ canvas{
 
     position:absolute;
 
+    width:100%;
+
+    height:100%;
+
     left:0;
 
     top:0;
 
-    width:100%;
+}
 
-    height:100%;
+
+
+#count{
+
+    font-size:25px;
+
+    margin:10px;
 
 }
 
@@ -89,9 +104,9 @@ canvas{
 
 button{
 
-    margin:10px;
-
     padding:15px 25px;
+
+    margin:10px;
 
     font-size:18px;
 
@@ -101,7 +116,6 @@ button{
 
 </style>
 
-
 </head>
 
 
@@ -110,7 +124,7 @@ button{
 
 
 <h2>
-iPhone ONNX AI Camera
+AI藥品辨識
 </h2>
 
 
@@ -134,23 +148,33 @@ id="canvas">
 
 
 
+<div id="count">
+
+藥品數量: 0 顆
+
+</div>
+
+
+
 <button onclick="startCamera()">
+
 開啟相機
+
 </button>
+
 
 
 <button onclick="stopCamera()">
+
 關閉相機
+
 </button>
+
 
 
 
 <script>
 
-
-// =====================
-// ONNX設定
-// =====================
 
 
 ort.env.wasm.wasmPaths =
@@ -188,10 +212,9 @@ canvas.getContext(
 
 
 
-
-// =====================
-// 載入模型
-// =====================
+// ======================
+// 載入ONNX
+// ======================
 
 
 async function loadModel(){
@@ -214,7 +237,7 @@ async function loadModel(){
 
 
         console.log(
-        "ONNX模型載入成功"
+        "模型載入完成"
         );
 
 
@@ -224,7 +247,7 @@ async function loadModel(){
 
 
         alert(
-        "模型載入失敗:\n"
+        "模型載入失敗\n"
         +
         e.message
         );
@@ -232,81 +255,57 @@ async function loadModel(){
 
     }
 
-
 }
 
 
 
 
 
-// =====================
+
+// ======================
 // 開啟相機
-// =====================
+// ======================
 
 
 async function startCamera(){
 
 
-
-    if(!session){
-
+    if(!session)
+    {
         await loadModel();
-
     }
 
 
 
-    try{
+    stream =
+    await navigator.mediaDevices
+    .getUserMedia({
 
+        video:{
 
-        stream =
-        await navigator.mediaDevices
-        .getUserMedia({
+            facingMode:
+            {
+                ideal:
+                "environment"
+            }
 
-            video:{
+        },
 
-                facingMode:
-                {
-                    ideal:
-                    "environment"
-                }
+        audio:false
 
-            },
-
-            audio:false
-
-
-        });
+    });
 
 
 
-        video.srcObject =
-        stream;
+    video.srcObject =
+    stream;
 
 
 
-        running=true;
+    running=true;
 
 
-
-        detectLoop();
-
-
-
-    }
-
-
-    catch(e){
-
-
-        alert(
-        "相機開啟失敗:"
-        +
-        e.message
-        );
-
-
-    }
+    detectLoop();
 
 
 }
@@ -316,18 +315,15 @@ async function startCamera(){
 
 
 
-
-// =====================
+// ======================
 // 關閉相機
-// =====================
+// ======================
 
 
 function stopCamera(){
 
 
-
     running=false;
-
 
 
     if(stream){
@@ -351,13 +347,12 @@ function stopCamera(){
 
 
 
-// =====================
-// AI循環
-// =====================
+// ======================
+// AI LOOP
+// ======================
 
 
 async function detectLoop(){
-
 
 
     if(!running)
@@ -368,49 +363,26 @@ async function detectLoop(){
     if(video.readyState===4){
 
 
-
-        let input =
+        let tensor =
         preprocess();
 
 
 
-        try{
+        let inputName =
+        session.inputNames[0];
 
 
-            let feeds={};
+        let result =
+        await session.run({
 
+            [inputName]:
+            tensor
 
-
-            let name =
-            session.inputNames[0];
-
-
-
-            feeds[name]=input;
-
-
-
-            let output =
-            await session.run(
-                feeds
-            );
+        });
 
 
 
-            drawPoints(output);
-
-
-
-        }
-
-
-        catch(e){
-
-
-            console.log(e);
-
-
-        }
+        drawBoxes(result);
 
 
 
@@ -423,7 +395,6 @@ async function detectLoop(){
     );
 
 
-
 }
 
 
@@ -432,10 +403,9 @@ async function detectLoop(){
 
 
 
-
-// =====================
-// 影像轉Tensor
-// =====================
+// ======================
+// 圖像轉Tensor
+// ======================
 
 
 function preprocess(){
@@ -446,26 +416,26 @@ function preprocess(){
 
 
 
-    let tempCanvas =
+    let temp =
     document.createElement(
         "canvas"
     );
 
 
-    tempCanvas.width=size;
+    temp.width=size;
 
-    tempCanvas.height=size;
+    temp.height=size;
 
 
 
-    let temp =
-    tempCanvas.getContext(
+    let tctx =
+    temp.getContext(
         "2d"
     );
 
 
 
-    temp.drawImage(
+    tctx.drawImage(
 
         video,
 
@@ -481,8 +451,8 @@ function preprocess(){
 
 
 
-    let image =
-    temp.getImageData(
+    let img =
+    tctx.getImageData(
 
         0,
 
@@ -496,8 +466,8 @@ function preprocess(){
 
 
 
-    let pixels =
-    image.data;
+    let data =
+    img.data;
 
 
 
@@ -512,7 +482,6 @@ function preprocess(){
 
 
 
-
     for(
         let i=0;
         i<size*size;
@@ -520,34 +489,25 @@ function preprocess(){
     ){
 
 
-
         input[i]
         =
-        pixels[i*4]
-        /
-        255;
+        data[i*4]/255;
 
 
 
         input[i+size*size]
         =
-        pixels[i*4+1]
-        /
-        255;
+        data[i*4+1]/255;
 
 
 
         input[i+size*size*2]
         =
-        pixels[i*4+2]
-        /
-        255;
+        data[i*4+2]/255;
 
 
 
     }
-
-
 
 
 
@@ -559,13 +519,13 @@ function preprocess(){
 
         [
 
-            1,
+        1,
 
-            3,
+        3,
 
-            size,
+        size,
 
-            size
+        size
 
         ]
 
@@ -580,14 +540,12 @@ function preprocess(){
 
 
 
+// ======================
+// 畫框與計數
+// ======================
 
 
-// =====================
-// 畫AI點
-// =====================
-
-
-function drawPoints(output){
+function drawBoxes(output){
 
 
 
@@ -625,51 +583,77 @@ function drawPoints(output){
 
 
 
-    console.log(data);
-
-
-
-
-
-    // 假設輸出:
-    //
-    // x1,y1,x2,y2...
-    //
-    // 0~1比例座標
+    let count=0;
 
 
 
     for(
+
         let i=0;
+
         i<data.length;
-        i+=2
+
+        i+=6
+
     ){
 
 
 
         let x =
-        data[i]
-        *
-        canvas.width;
-
-
+        data[i];
 
         let y =
-        data[i+1]
-        *
-        canvas.height;
+        data[i+1];
+
+        let w =
+        data[i+2];
+
+        let h =
+        data[i+3];
+
+        let score =
+        data[i+4];
 
 
 
-        drawDot(
-            x,
-            y
+        if(score < 0.5)
+            continue;
+
+
+
+        count++;
+
+
+
+        drawBox(
+
+            x*canvas.width,
+
+            y*canvas.height,
+
+            w*canvas.width,
+
+            h*canvas.height,
+
+            score
+
         );
+
 
 
     }
 
 
+
+    document.getElementById(
+    "count"
+    ).innerHTML =
+
+    "藥品數量: "
+    +
+    count
+    +
+    " 顆";
 
 }
 
@@ -678,26 +662,44 @@ function drawPoints(output){
 
 
 
-
-function drawDot(x,y){
-
-
-
-    ctx.beginPath();
+// ======================
+// 畫單顆藥框
+// ======================
 
 
+function drawBox(
 
-    ctx.arc(
+x,
 
-        x,
+y,
 
-        y,
+w,
 
-        8,
+h,
 
-        0,
+score
 
-        Math.PI*2
+){
+
+
+
+    ctx.strokeStyle =
+    "red";
+
+
+    ctx.lineWidth=3;
+
+
+
+    ctx.strokeRect(
+
+        x-w/2,
+
+        y-h/2,
+
+        w,
+
+        h
 
     );
 
@@ -707,9 +709,24 @@ function drawDot(x,y){
     "red";
 
 
+    ctx.font =
+    "20px Arial";
 
-    ctx.fill();
 
+
+    ctx.fillText(
+
+        "藥 "
+        +
+        Math.round(score*100)
+        +
+        "%",
+
+        x-w/2,
+
+        y-h/2-5
+
+    );
 
 
 }
