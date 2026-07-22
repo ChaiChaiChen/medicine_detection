@@ -4,10 +4,9 @@
 <head>
 
 <meta charset="UTF-8">
-
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>AI藥品計數</title>
+<title>AI藥品辨識</title>
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 
@@ -26,57 +25,75 @@ body{
 #cameraBox{
 
     position:relative;
+
     width:100vw;
+
     height:75vh;
+
     overflow:hidden;
 
 }
 
 
+
 video{
 
     position:absolute;
+
+    left:0;
+
+    top:0;
+
     width:100%;
+
     height:100%;
-    object-fit:contain;
-    background:black;
+
+    object-fit:cover;
 
 }
+
 
 
 canvas{
 
     position:absolute;
+
     left:0;
+
     top:0;
+
     width:100%;
+
     height:100%;
 
 }
 
 
+
 #count{
 
     font-size:26px;
+
     margin:15px;
 
 }
 
 
+
 button{
 
-    font-size:18px;
     padding:12px 25px;
+
     margin:10px;
+
+    font-size:18px;
 
 }
 
 
 </style>
 
-
 </head>
-
 
 
 <body>
@@ -87,18 +104,30 @@ AI藥品顆數辨識
 </h2>
 
 
+
 <div id="cameraBox">
 
-<video id="video" autoplay playsinline></video>
 
-<canvas id="canvas"></canvas>
+<video
+id="video"
+autoplay
+playsinline>
+</video>
+
+
+<canvas
+id="canvas">
+</canvas>
+
 
 </div>
+
 
 
 <div id="count">
 藥品數量:0 顆
 </div>
+
 
 
 <button onclick="startCamera()">
@@ -109,6 +138,7 @@ AI藥品顆數辨識
 <button onclick="stopCamera()">
 關閉相機
 </button>
+
 
 
 
@@ -128,6 +158,7 @@ let stream=null;
 let running=false;
 
 
+
 const video =
 document.getElementById("video");
 
@@ -138,10 +169,6 @@ document.getElementById("canvas");
 
 const ctx =
 canvas.getContext("2d");
-
-
-
-let lastBoxes=[];
 
 
 
@@ -156,14 +183,13 @@ async function loadModel(){
         "model.onnx",
 
         {
-
             executionProviders:[
                 "wasm"
             ]
-
         }
 
     );
+
 
 }
 
@@ -180,10 +206,27 @@ async function startCamera(){
 
 
     stream =
-    await navigator.mediaDevices.getUserMedia({
+    await navigator.mediaDevices
+    .getUserMedia({
 
         video:{
-            facingMode:"environment"
+
+            facingMode:
+            {
+                ideal:
+                "environment"
+            },
+
+            width:
+            {
+                ideal:1280
+            },
+
+            height:
+            {
+                ideal:720
+            }
+
         },
 
         audio:false
@@ -250,40 +293,30 @@ function stopCamera(){
 
 
 
-// ======================
-// letterbox資訊
-// ======================
+// ========================
+// YOLO letterbox
+// ========================
 
 
-function createInput(){
+function preprocess(){
 
 
     const size=640;
 
 
-    let c =
+
+    let temp =
     document.createElement("canvas");
 
 
-    c.width=size;
+    temp.width=size;
 
-    c.height=size;
-
-
-
-    let cctx =
-    c.getContext("2d");
+    temp.height=size;
 
 
 
-    cctx.fillStyle="black";
-
-    cctx.fillRect(
-        0,
-        0,
-        size,
-        size
-    );
+    let tctx =
+    temp.getContext("2d");
 
 
 
@@ -307,22 +340,33 @@ function createInput(){
 
 
 
-    let offsetX =
+    let padX =
     (size-newW)/2;
 
 
-    let offsetY =
+    let padY =
     (size-newH)/2;
 
 
 
-    cctx.drawImage(
+    tctx.fillStyle="black";
+
+    tctx.fillRect(
+        0,
+        0,
+        size,
+        size
+    );
+
+
+
+    tctx.drawImage(
 
         video,
 
-        offsetX,
+        padX,
 
-        offsetY,
+        padY,
 
         newW,
 
@@ -333,7 +377,7 @@ function createInput(){
 
 
     let img =
-    cctx.getImageData(
+    tctx.getImageData(
 
         0,
 
@@ -362,20 +406,16 @@ function createInput(){
         i++
     ){
 
-        input[i]
-        =
+        input[i]=
         img.data[i*4]/255;
 
 
-        input[i+size*size]
-        =
+        input[i+size*size]=
         img.data[i*4+1]/255;
 
 
-        input[i+size*size*2]
-        =
+        input[i+size*size*2]=
         img.data[i*4+2]/255;
-
 
     }
 
@@ -399,11 +439,12 @@ function createInput(){
 
         ),
 
+
         scale,
 
-        offsetX,
+        padX,
 
-        offsetY
+        padY
 
     };
 
@@ -426,11 +467,11 @@ async function detectLoop(){
 
 
     let prep =
-    createInput();
+    preprocess();
 
 
 
-    let output =
+    let result =
     await session.run({
 
         [session.inputNames[0]]:
@@ -442,13 +483,13 @@ async function detectLoop(){
 
     drawPoints(
 
-        output.output0,
+        result.output0,
 
         prep.scale,
 
-        prep.offsetX,
+        prep.padX,
 
-        prep.offsetY
+        prep.padY
 
     );
 
@@ -468,17 +509,19 @@ async function detectLoop(){
 
 
 
+
 function drawPoints(
 
 output,
 
 scale,
 
-offsetX,
+padX,
 
-offsetY
+padY
 
 ){
+
 
 
     ctx.clearRect(
@@ -509,10 +552,15 @@ offsetY
 
 
     for(
+
         let i=0;
+
         i<total;
+
         i++
+
     ){
+
 
 
         let score =
@@ -525,6 +573,8 @@ offsetY
 
 
 
+        // YOLO 640座標
+
         let x640 =
         data[i];
 
@@ -534,14 +584,14 @@ offsetY
 
 
 
-        // 移除letterbox偏移
+        // 去除letterbox
 
         let x =
-        (x640-offsetX)/scale;
+        (x640-padX)/scale;
 
 
         let y =
-        (y640-offsetY)/scale;
+        (y640-padY)/scale;
 
 
 
@@ -566,13 +616,9 @@ offsetY
 
 
     points =
-    nms(
+    nms(points,0.35);
 
-        points,
 
-        0.35
-
-    );
 
 
 
@@ -608,6 +654,7 @@ offsetY
 
 
 
+
     document.getElementById("count")
     .innerHTML=
 
@@ -618,7 +665,6 @@ offsetY
     " 顆";
 
 
-
 }
 
 
@@ -628,8 +674,7 @@ offsetY
 
 
 
-
-function nms(boxes,threshold){
+function nms(boxes,t){
 
 
     boxes.sort(
@@ -640,32 +685,24 @@ function nms(boxes,threshold){
     );
 
 
-
-    let result=[];
-
+    let r=[];
 
 
     while(boxes.length){
 
 
-        let best =
+        let best=
         boxes.shift();
 
 
-
-        result.push(best);
-
+        r.push(best);
 
 
-        boxes =
+        boxes=
         boxes.filter(
 
             b=>
-
-            iou(best,b)
-
-            <
-            threshold
+            iou(best,b)<t
 
         );
 
@@ -673,11 +710,11 @@ function nms(boxes,threshold){
     }
 
 
-
-    return result;
-
+    return r;
 
 }
+
+
 
 
 
@@ -734,20 +771,25 @@ function iou(a,b){
 
 
 
-    return inter /
+    return inter/
+
     (
-        a.w*a.h
-        +
-        b.w*b.h
-        -
+
+        a.w*a.h+
+
+        b.w*b.h-
+
         inter
+
     );
 
 
 }
 
 
+
 </script>
+
 
 </body>
 
