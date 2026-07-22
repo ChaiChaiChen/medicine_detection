@@ -4,6 +4,7 @@
 <head>
 
 <meta charset="UTF-8">
+
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <title>AI藥品計數</title>
@@ -64,16 +65,18 @@ canvas{
 
 button{
 
+    font-size:18px;
     padding:12px 25px;
     margin:10px;
-    font-size:18px;
 
 }
 
 
 </style>
 
+
 </head>
+
 
 
 <body>
@@ -86,24 +89,16 @@ AI藥品顆數辨識
 
 <div id="cameraBox">
 
-<video
-id="video"
-autoplay
-playsinline>
-</video>
-
+<video id="video" autoplay playsinline></video>
 
 <canvas id="canvas"></canvas>
 
-
 </div>
-
 
 
 <div id="count">
 藥品數量:0 顆
 </div>
-
 
 
 <button onclick="startCamera()">
@@ -118,7 +113,6 @@ playsinline>
 
 
 
-
 <script>
 
 
@@ -128,7 +122,9 @@ ort.env.wasm.wasmPaths =
 
 
 let session=null;
+
 let stream=null;
+
 let running=false;
 
 
@@ -145,7 +141,7 @@ canvas.getContext("2d");
 
 
 
-let stableCount=0;
+let lastBoxes=[];
 
 
 
@@ -160,13 +156,14 @@ async function loadModel(){
         "model.onnx",
 
         {
+
             executionProviders:[
                 "wasm"
             ]
+
         }
 
     );
-
 
 }
 
@@ -183,12 +180,10 @@ async function startCamera(){
 
 
     stream =
-    await navigator.mediaDevices
-    .getUserMedia({
+    await navigator.mediaDevices.getUserMedia({
 
         video:{
-            facingMode:
-            "environment"
+            facingMode:"environment"
         },
 
         audio:false
@@ -210,6 +205,7 @@ async function startCamera(){
 
         canvas.height =
         video.videoHeight;
+
 
 
         running=true;
@@ -245,7 +241,6 @@ function stopCamera(){
 
     }
 
-
 }
 
 
@@ -254,12 +249,13 @@ function stopCamera(){
 
 
 
-// =========================
-// YOLO letterbox 前處理
-// =========================
+
+// ======================
+// letterbox資訊
+// ======================
 
 
-function preprocess(){
+function createInput(){
 
 
     const size=640;
@@ -270,7 +266,9 @@ function preprocess(){
 
 
     c.width=size;
+
     c.height=size;
+
 
 
     let cctx =
@@ -300,21 +298,21 @@ function preprocess(){
 
 
 
-    let nw =
+    let newW =
     video.videoWidth*scale;
 
 
-    let nh =
+    let newH =
     video.videoHeight*scale;
 
 
 
-    let dx =
-    (size-nw)/2;
+    let offsetX =
+    (size-newW)/2;
 
 
-    let dy =
-    (size-nh)/2;
+    let offsetY =
+    (size-newH)/2;
 
 
 
@@ -322,16 +320,15 @@ function preprocess(){
 
         video,
 
-        dx,
+        offsetX,
 
-        dy,
+        offsetY,
 
-        nw,
+        newW,
 
-        nh
+        newH
 
     );
-
 
 
 
@@ -339,8 +336,11 @@ function preprocess(){
     cctx.getImageData(
 
         0,
+
         0,
+
         size,
+
         size
 
     );
@@ -357,13 +357,9 @@ function preprocess(){
 
 
     for(
-
         let i=0;
-
         i<size*size;
-
         i++
-
     ){
 
         input[i]
@@ -385,22 +381,35 @@ function preprocess(){
 
 
 
-    return new ort.Tensor(
+    return {
 
-        "float32",
+        tensor:
+        new ort.Tensor(
 
-        input,
+            "float32",
 
-        [
-            1,
-            3,
-            size,
-            size
-        ]
+            input,
 
-    );
+            [
+                1,
+                3,
+                size,
+                size
+            ]
+
+        ),
+
+        scale,
+
+        offsetX,
+
+        offsetY
+
+    };
+
 
 }
+
 
 
 
@@ -416,18 +425,31 @@ async function detectLoop(){
 
 
 
+    let prep =
+    createInput();
+
+
+
     let output =
     await session.run({
 
         [session.inputNames[0]]:
-        preprocess()
+        prep.tensor
 
     });
 
 
 
     drawPoints(
-        output.output0
+
+        output.output0,
+
+        prep.scale,
+
+        prep.offsetX,
+
+        prep.offsetY
+
     );
 
 
@@ -445,19 +467,28 @@ async function detectLoop(){
 
 
 
-// =========================
-// 只畫中心點
-// =========================
 
+function drawPoints(
 
-function drawPoints(output){
+output,
+
+scale,
+
+offsetX,
+
+offsetY
+
+){
 
 
     ctx.clearRect(
 
         0,
+
         0,
+
         canvas.width,
+
         canvas.height
 
     );
@@ -468,7 +499,9 @@ function drawPoints(output){
     output.data;
 
 
+
     let total=8400;
+
 
 
     let points=[];
@@ -476,13 +509,9 @@ function drawPoints(output){
 
 
     for(
-
         let i=0;
-
         i<total;
-
         i++
-
     ){
 
 
@@ -496,17 +525,37 @@ function drawPoints(output){
 
 
 
+        let x640 =
+        data[i];
+
+
+        let y640 =
+        data[i+total];
+
+
+
+        // 移除letterbox偏移
+
+        let x =
+        (x640-offsetX)/scale;
+
+
+        let y =
+        (y640-offsetY)/scale;
+
+
+
         points.push({
 
-            x:data[i],
+            x,
 
-            y:data[i+total],
+            y,
 
-            w:data[i+total*2],
+            w:data[i+total*2]/scale,
 
-            h:data[i+total*3],
+            h:data[i+total*3]/scale,
 
-            score:score
+            score
 
         });
 
@@ -515,22 +564,19 @@ function drawPoints(output){
 
 
 
-    points =
-    nms(points,0.35);
 
+    points =
+    nms(
+
+        points,
+
+        0.35
+
+    );
 
 
 
     points.forEach(p=>{
-
-
-        let x =
-        p.x/640*canvas.width;
-
-
-        let y =
-        p.y/640*canvas.height;
-
 
 
         ctx.beginPath();
@@ -538,18 +584,17 @@ function drawPoints(output){
 
         ctx.arc(
 
-            x,
+            p.x,
 
-            y,
+            p.y,
 
-            7,
+            8,
 
             0,
 
             Math.PI*2
 
         );
-
 
 
         ctx.fillStyle="red";
@@ -563,31 +608,20 @@ function drawPoints(output){
 
 
 
-
-    stableCount =
-    Math.round(
-
-        stableCount*0.8
-
-        +
-
-        points.length*0.2
-
-    );
-
-
-
     document.getElementById("count")
     .innerHTML=
 
     "藥品數量:"
     +
-    stableCount
+    points.length
     +
     " 顆";
 
 
+
 }
+
+
 
 
 
@@ -601,7 +635,6 @@ function nms(boxes,threshold){
     boxes.sort(
 
         (a,b)=>
-
         b.score-a.score
 
     );
@@ -640,7 +673,9 @@ function nms(boxes,threshold){
     }
 
 
+
     return result;
+
 
 }
 
@@ -713,7 +748,6 @@ function iou(a,b){
 
 
 </script>
-
 
 </body>
 
