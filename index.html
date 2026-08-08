@@ -1,17 +1,15 @@
 <!DOCTYPE html>
-
 <html lang="zh-TW">
 
 <head>
 
 <meta charset="UTF-8">
-
-<meta name="viewport"
-   content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <title>AI藥品辨識</title>
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+
 
 <style>
 
@@ -23,487 +21,335 @@ body{
     font-family:sans-serif;
 }
 
+
 #cameraBox{
+
     position:relative;
+
     width:100vw;
+
     height:75vh;
+
     overflow:hidden;
+
 }
+
+
 
 video{
+
     position:absolute;
+
     left:0;
+
     top:0;
+
     width:100%;
+
     height:100%;
+
     object-fit:cover;
+
 }
+
+
 
 canvas{
+
     position:absolute;
+
     left:0;
+
     top:0;
+
     width:100%;
+
     height:100%;
+
 }
+
+
 
 #count{
+
     font-size:26px;
-    margin:10px;
+
+    margin:15px;
+
 }
 
-#fps{
-    font-size:16px;
-    color:#aaa;
-    margin:5px;
-}
+
 
 button{
+
     padding:12px 25px;
-    margin:8px;
+
+    margin:10px;
+
     font-size:18px;
+
 }
+
 
 </style>
 
 </head>
 
+
 <body>
 
-<h2>AI藥品顆數辨識</h2>
+
+<h2>
+AI藥品顆數辨識
+</h2>
+
+
 
 <div id="cameraBox">
 
-```
+
 <video
-    id="video"
-    autoplay
-    playsinline>
+id="video"
+autoplay
+playsinline>
 </video>
 
+
 <canvas
-    id="canvas">
+id="canvas">
 </canvas>
-```
+
 
 </div>
+
+
 
 <div id="count">
-    藥品數量: 0 顆
+藥品數量:0 顆
 </div>
 
-<div id="fps">
-    FPS: 0
-</div>
+
 
 <button onclick="startCamera()">
-    開啟相機
+開啟相機
 </button>
 
+
 <button onclick="stopCamera()">
-    關閉相機
+關閉相機
 </button>
+
+
+
+
 
 <script>
 
 
-// ======================================================
-// ONNX Runtime 設定
-// ======================================================
-
 ort.env.wasm.wasmPaths =
-    "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
-
-// 啟用 SIMD
-ort.env.wasm.simd = true;
-
-// WASM threads
-// 如果某些手機不穩，可以改成 1
-ort.env.wasm.numThreads = 2;
+"https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
 
 
-// ======================================================
-// 全域變數
-// ======================================================
 
-let session = null;
+let session=null;
 
-let stream = null;
+let stream=null;
 
-let running = false;
-
-let inferenceBusy = false;
+let running=false;
 
 
-// YOLO輸入尺寸
-// 416 是速度與辨識率的折衷
-const MODEL_SIZE = 416;
-
-
-// 每幾個畫面做一次 AI
-// 1 = 每幀
-// 2 = 每2幀
-// 3 = 每3幀
-const INFERENCE_INTERVAL = 2;
-
-
-// Confidence
-const CONFIDENCE_THRESHOLD = 0.65;
-
-
-// NMS IoU
-const NMS_THRESHOLD = 0.35;
-
-
-// Tracking 最大距離
-const MAX_TRACK_DISTANCE = 100;
-
-
-// EMA 平滑程度
-// 越小越穩
-// 越大越跟手
-const SMOOTH_ALPHA = 0.45;
-
-
-// ======================================================
-// DOM
-// ======================================================
 
 const video =
-    document.getElementById("video");
+document.getElementById("video");
+
 
 const canvas =
-    document.getElementById("canvas");
+document.getElementById("canvas");
+
 
 const ctx =
-    canvas.getContext("2d", {
-        alpha: true
-    });
+canvas.getContext("2d");
 
 
-// ======================================================
-// Canvas
-// ======================================================
-
-let canvasWidth = 0;
-
-let canvasHeight = 0;
 
 
-// ======================================================
-// Detection
-// ======================================================
-
-let latestPoints = [];
-
-let previousPoints = [];
-
-let frameCounter = 0;
-
-
-// ======================================================
-// FPS
-// ======================================================
-
-let lastFpsTime = performance.now();
-
-let fpsFrameCount = 0;
-
-let currentFPS = 0;
-
-
-// ======================================================
-// 載入模型
-// ======================================================
 
 async function loadModel(){
 
-    if(session)
-        return;
 
-    console.log("正在載入 model.onnx...");
+    session =
+    await ort.InferenceSession.create(
 
-    try{
+        "model.onnx",
 
-        // 優先使用 WebGPU
-        // 如果瀏覽器不支援，改用 WASM
-        let providers = [];
-
-        if(
-            typeof navigator !== "undefined" &&
-            "gpu" in navigator
-        ){
-
-            providers.push("webgpu");
-
+        {
+            executionProviders:[
+                "wasm"
+            ]
         }
 
-        providers.push("wasm");
+    );
 
-
-        session =
-            await ort.InferenceSession.create(
-
-                "model.onnx",
-
-                {
-                    executionProviders:
-                        providers,
-
-                    graphOptimizationLevel:
-                        "all"
-                }
-
-            );
-
-
-        console.log(
-            "模型載入完成"
-        );
-
-        console.log(
-            "Input:",
-            session.inputNames
-        );
-
-        console.log(
-            "Output:",
-            session.outputNames
-        );
-
-    }catch(error){
-
-        console.error(
-            "模型載入失敗:",
-            error
-        );
-
-        alert(
-            "model.onnx 載入失敗，請確認檔案位置。"
-        );
-
-        throw error;
-
-    }
 
 }
 
 
-// ======================================================
-// 開啟相機
-// ======================================================
+
+
 
 async function startCamera(){
 
-    if(running)
-        return;
+
+    if(!session)
+        await loadModel();
 
 
-    try{
 
-        // 先載入模型
-        if(!session){
+    stream =
+    await navigator.mediaDevices
+    .getUserMedia({
 
-            await loadModel();
+        video:{
 
-        }
+            facingMode:
+            {
+                ideal:
+                "environment"
+            },
 
+            width:
+            {
+                ideal:1280
+            },
 
-        // 開啟相機
-        stream =
-            await navigator.mediaDevices
-                .getUserMedia({
+            height:
+            {
+                ideal:720
+            }
 
-                    video:{
+        },
 
-                        facingMode:{
-                            ideal:"environment"
-                        },
+        audio:false
 
-                        width:{
-                            ideal:1280
-                        },
-
-                        height:{
-                            ideal:720
-                        },
-
-                        frameRate:{
-                            ideal:30,
-                            max:30
-                        }
-
-                    },
-
-                    audio:false
-
-                });
+    });
 
 
-        video.srcObject = stream;
+
+    video.srcObject=stream;
 
 
-        video.onloadedmetadata = ()=>{
 
-            canvasWidth =
-                video.videoWidth;
-
-            canvasHeight =
-                video.videoHeight;
+    video.onloadedmetadata=()=>{
 
 
-            canvas.width =
-                canvasWidth;
-
-            canvas.height =
-                canvasHeight;
+        canvas.width =
+        video.videoWidth;
 
 
-            running = true;
-
-            inferenceBusy = false;
-
-            frameCounter = 0;
-
-            latestPoints = [];
-
-            previousPoints = [];
+        canvas.height =
+        video.videoHeight;
 
 
-            lastFpsTime =
-                performance.now();
 
-            fpsFrameCount = 0;
+        running=true;
 
 
-            requestAnimationFrame(
-                renderLoop
-            );
-
-        };
+        detectLoop();
 
 
-    }catch(error){
+    };
 
-        console.error(
-            "相機啟動失敗:",
-            error
-        );
-
-        alert(
-            "無法開啟相機，請確認瀏覽器相機權限。"
-        );
-
-    }
 
 }
 
 
-// ======================================================
-// 關閉相機
-// ======================================================
+
+
+
+
 
 function stopCamera(){
 
-    running = false;
 
-    inferenceBusy = false;
+    running=false;
 
 
     if(stream){
 
         stream
-            .getTracks()
-            .forEach(
-                track => track.stop()
-            );
-
-        stream = null;
+        .getTracks()
+        .forEach(
+            t=>t.stop()
+        );
 
     }
-
-
-    video.srcObject = null;
-
-    latestPoints = [];
-
-    previousPoints = [];
-
-
-    ctx.clearRect(
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
-
-
-    document.getElementById("count")
-        .innerHTML =
-        "藥品數量: 0 顆";
 
 }
 
 
-// ======================================================
-// Preprocess
-// YOLO Letterbox
-// ======================================================
+
+
+
+
+
+
+// ========================
+// YOLO letterbox
+// ========================
+
 
 function preprocess(){
 
-    const size = MODEL_SIZE;
+
+    const size=640;
 
 
-    const temp =
-        document.createElement("canvas");
 
-    temp.width = size;
-
-    temp.height = size;
+    let temp =
+    document.createElement("canvas");
 
 
-    const tctx =
-        temp.getContext("2d", {
-            willReadFrequently:true
-        });
+    temp.width=size;
+
+    temp.height=size;
 
 
-    const videoWidth =
-        video.videoWidth;
 
-    const videoHeight =
-        video.videoHeight;
+    let tctx =
+    temp.getContext("2d");
 
 
-    const scale =
-        Math.min(
 
-            size / videoWidth,
+    let scale =
+    Math.min(
 
-            size / videoHeight
+        size/video.videoWidth,
 
-        );
+        size/video.videoHeight
 
-
-    const newW =
-        videoWidth * scale;
+    );
 
 
-    const newH =
-        videoHeight * scale;
+
+    let newW =
+    video.videoWidth*scale;
 
 
-    const padX =
-        (size - newW) / 2;
+    let newH =
+    video.videoHeight*scale;
 
 
-    const padY =
-        (size - newH) / 2;
+
+    let padX =
+    (size-newW)/2;
 
 
-    // 黑色背景
-    tctx.fillStyle = "black";
+    let padY =
+    (size-newH)/2;
+
+
+
+    tctx.fillStyle="black";
 
     tctx.fillRect(
         0,
@@ -513,83 +359,86 @@ function preprocess(){
     );
 
 
-    // 將相機影像縮放到 416×416
+
     tctx.drawImage(
 
         video,
 
         padX,
+
         padY,
 
         newW,
+
         newH
 
     );
 
 
-    const img =
-        tctx.getImageData(
-            0,
-            0,
-            size,
-            size
-        );
+
+    let img =
+    tctx.getImageData(
+
+        0,
+
+        0,
+
+        size,
+
+        size
+
+    );
 
 
-    const pixelCount =
-        size * size;
+
+    let input =
+    new Float32Array(
+
+        size*size*3
+
+    );
 
 
-    const input =
-        new Float32Array(
-            pixelCount * 3
-        );
-
-
-    // HWC -> CHW
-    // RGB 0~255 -> 0~1
 
     for(
-        let i = 0;
-        i < pixelCount;
+        let i=0;
+        i<size*size;
         i++
     ){
 
-        const src =
-            i * 4;
+        input[i]=
+        img.data[i*4]/255;
 
 
-        input[i] =
-            img.data[src] / 255;
+        input[i+size*size]=
+        img.data[i*4+1]/255;
 
 
-        input[i + pixelCount] =
-            img.data[src + 1] / 255;
-
-
-        input[i + pixelCount * 2] =
-            img.data[src + 2] / 255;
+        input[i+size*size*2]=
+        img.data[i*4+2]/255;
 
     }
+
 
 
     return {
 
         tensor:
-            new ort.Tensor(
+        new ort.Tensor(
 
-                "float32",
+            "float32",
 
-                input,
+            input,
 
-                [
-                    1,
-                    3,
-                    size,
-                    size
-                ]
+            [
+                1,
+                3,
+                size,
+                size
+            ]
 
-            ),
+        ),
+
 
         scale,
 
@@ -599,717 +448,348 @@ function preprocess(){
 
     };
 
-}
-
-
-// ======================================================
-// AI Detection
-// ======================================================
-
-async function runInference(){
-
-    if(
-        !running ||
-        inferenceBusy ||
-        !session
-    ){
-
-        return;
-
-    }
-
-
-    inferenceBusy = true;
-
-
-    try{
-
-        const prep =
-            preprocess();
-
-
-        const feeds = {};
-
-
-        feeds[
-            session.inputNames[0]
-        ] = prep.tensor;
-
-
-        const result =
-            await session.run(
-                feeds
-            );
-
-
-        const output =
-            result.output0 ||
-            result[
-                session.outputNames[0]
-            ];
-
-
-        const points =
-            decodeOutput(
-
-                output,
-
-                prep.scale,
-
-                prep.padX,
-
-                prep.padY
-
-            );
-
-
-        // NMS
-        const nmsPoints =
-            nms(
-                points,
-                NMS_THRESHOLD
-            );
-
-
-        // Tracking + smoothing
-        latestPoints =
-            trackPoints(
-                nmsPoints
-            );
-
-
-        updateCount(
-            latestPoints.length
-        );
-
-
-    }catch(error){
-
-        console.error(
-            "Inference error:",
-            error
-        );
-
-    }
-
-
-    inferenceBusy = false;
 
 }
 
 
-// ======================================================
-// Decode YOLO Output
-// ======================================================
 
-function decodeOutput(
 
-    output,
-    scale,
-    padX,
-    padY
 
-){
 
-    const data =
-        output.data;
 
 
-    /*
-        目前假設你的 model.onnx 輸出格式：
+async function detectLoop(){
 
-        [x]
-        [y]
-        [w]
-        [h]
-        [confidence]
-
-        每個 detection 共 8400 個點。
-
-        如果你的模型是 YOLOv8 / YOLO11
-        的標準輸出格式，請確認輸出格式。
-    */
-
-
-    const total = 8400;
-
-    const points = [];
-
-
-    for(
-        let i = 0;
-        i < total;
-        i++
-    ){
-
-        const score =
-            data[
-                i + total * 4
-            ];
-
-
-        if(
-            score < CONFIDENCE_THRESHOLD
-        ){
-
-            continue;
-
-        }
-
-
-        const x640 =
-            data[i];
-
-
-        const y640 =
-            data[
-                i + total
-            ];
-
-
-        const w640 =
-            data[
-                i + total * 2
-            ];
-
-
-        const h640 =
-            data[
-                i + total * 3
-            ];
-
-
-        // 去除 letterbox
-        const x =
-            (x640 - padX) /
-            scale;
-
-
-        const y =
-            (y640 - padY) /
-            scale;
-
-
-        const w =
-            w640 / scale;
-
-
-        const h =
-            h640 / scale;
-
-
-        // 排除明顯異常框
-        if(
-            w <= 0 ||
-            h <= 0
-        ){
-
-            continue;
-
-        }
-
-
-        points.push({
-
-            x,
-            y,
-            w,
-            h,
-            score
-
-        });
-
-    }
-
-
-    return points;
-
-}
-
-
-// ======================================================
-// Tracking + EMA
-// ======================================================
-
-function trackPoints(newPoints){
-
-    const result = [];
-
-    const usedOld = new Set();
-
-
-    for(
-        const point of newPoints
-    ){
-
-        let bestIndex = -1;
-
-        let bestDistance =
-            Infinity;
-
-
-        for(
-            let i = 0;
-            i < previousPoints.length;
-            i++
-        ){
-
-            if(
-                usedOld.has(i)
-            ){
-
-                continue;
-
-            }
-
-
-            const old =
-                previousPoints[i];
-
-
-            const dx =
-                point.x - old.x;
-
-
-            const dy =
-                point.y - old.y;
-
-
-            const distance =
-                Math.sqrt(
-                    dx * dx +
-                    dy * dy
-                );
-
-
-            if(
-                distance <
-                bestDistance
-            ){
-
-                bestDistance =
-                    distance;
-
-                bestIndex =
-                    i;
-
-            }
-
-        }
-
-
-        if(
-            bestIndex !== -1 &&
-            bestDistance <
-            MAX_TRACK_DISTANCE
-        ){
-
-            const old =
-                previousPoints[
-                    bestIndex
-                ];
-
-
-            usedOld.add(
-                bestIndex
-            );
-
-
-            // EMA
-            point.x =
-                old.x * (1 - SMOOTH_ALPHA)
-                +
-                point.x * SMOOTH_ALPHA;
-
-
-            point.y =
-                old.y * (1 - SMOOTH_ALPHA)
-                +
-                point.y * SMOOTH_ALPHA;
-
-
-            point.w =
-                old.w * (1 - SMOOTH_ALPHA)
-                +
-                point.w * SMOOTH_ALPHA;
-
-
-            point.h =
-                old.h * (1 - SMOOTH_ALPHA)
-                +
-                point.h * SMOOTH_ALPHA;
-
-        }
-
-
-        result.push(point);
-
-    }
-
-
-    previousPoints =
-        result.map(
-            p => ({
-                x:p.x,
-                y:p.y,
-                w:p.w,
-                h:p.h,
-                score:p.score
-            })
-        );
-
-
-    return result;
-
-}
-
-
-// ======================================================
-// Render Loop
-// ======================================================
-
-function renderLoop(){
 
     if(!running)
         return;
 
 
-    frameCounter++;
+
+    let prep =
+    preprocess();
 
 
-    /*
-        不讓 AI 控制畫面更新速度。
 
-        Canvas 每一幀更新。
+    let result =
+    await session.run({
 
-        AI 則按照 INFERENCE_INTERVAL
-        執行。
-    */
+        [session.inputNames[0]]:
+        prep.tensor
 
-    if(
-        frameCounter %
-        INFERENCE_INTERVAL === 0
-    ){
+    });
 
-        if(!inferenceBusy){
-
-            runInference();
-
-        }
-
-    }
 
 
     drawPoints(
-        latestPoints
+
+        result.output0,
+
+        prep.scale,
+
+        prep.padX,
+
+        prep.padY
+
     );
 
-
-    updateFPS();
 
 
     requestAnimationFrame(
-        renderLoop
+        detectLoop
     );
+
 
 }
 
 
-// ======================================================
-// 畫框
-// ======================================================
 
-function drawPoints(points){
+
+
+
+
+
+
+function drawPoints(
+
+output,
+
+scale,
+
+padX,
+
+padY
+
+){
+
+
 
     ctx.clearRect(
+
         0,
+
         0,
+
         canvas.width,
+
         canvas.height
+
     );
 
 
+
+    let data =
+    output.data;
+
+
+
+    let total=8400;
+
+
+
+    let points=[];
+
+
+
     for(
-        const p of points
+
+        let i=0;
+
+        i<total;
+
+        i++
+
     ){
 
-        const x = p.x;
-
-        const y = p.y;
 
 
-        // 畫中心點
+        let score =
+        data[i+total*4];
+
+
+
+        if(score<0.65)
+            continue;
+
+
+
+        // YOLO 640座標
+
+        let x640 =
+        data[i];
+
+
+        let y640 =
+        data[i+total];
+
+
+
+        // 去除letterbox
+
+        let x =
+        (x640-padX)/scale;
+
+
+        let y =
+        (y640-padY)/scale;
+
+
+
+        points.push({
+
+            x,
+
+            y,
+
+            w:data[i+total*2]/scale,
+
+            h:data[i+total*3]/scale,
+
+            score
+
+        });
+
+
+    }
+
+
+
+
+    points =
+    nms(points,0.35);
+
+
+
+
+
+    points.forEach(p=>{
+
+
         ctx.beginPath();
 
+
         ctx.arc(
-            x,
-            y,
+
+            p.x,
+
+            p.y,
+
             8,
+
             0,
-            Math.PI * 2
+
+            Math.PI*2
+
         );
 
 
-        ctx.fillStyle =
-            "red";
+        ctx.fillStyle="red";
+
 
         ctx.fill();
 
 
-        // 畫框
-        const x1 =
-            x - p.w / 2;
-
-        const y1 =
-            y - p.h / 2;
+    });
 
 
-        ctx.strokeStyle =
-            "red";
-
-        ctx.lineWidth = 3;
 
 
-        ctx.strokeRect(
-
-            x1,
-            y1,
-            p.w,
-            p.h
-
-        );
-
-
-        // confidence
-        ctx.font =
-            "16px sans-serif";
-
-        ctx.fillStyle =
-            "red";
-
-
-        ctx.fillText(
-
-            Math.round(
-                p.score * 100
-            ) + "%",
-
-            x1,
-            y1 - 5
-
-        );
-
-    }
-
-}
-
-
-// ======================================================
-// 更新數量
-// ======================================================
-
-function updateCount(count){
 
     document.getElementById("count")
-        .innerHTML =
-        "藥品數量: "
-        +
-        count
-        +
-        " 顆";
+    .innerHTML=
+
+    "藥品數量:"
+    +
+    points.length
+    +
+    " 顆";
+
 
 }
 
 
-// ======================================================
-// NMS
-// ======================================================
 
-function nms(boxes, threshold){
 
-    boxes =
-        boxes.slice().sort(
-            (a,b) =>
-                b.score - a.score
+
+
+
+
+function nms(boxes,t){
+
+
+    boxes.sort(
+
+        (a,b)=>
+        b.score-a.score
+
+    );
+
+
+    let r=[];
+
+
+    while(boxes.length){
+
+
+        let best=
+        boxes.shift();
+
+
+        r.push(best);
+
+
+        boxes=
+        boxes.filter(
+
+            b=>
+            iou(best,b)<t
+
         );
 
-
-    const result = [];
-
-
-    while(
-        boxes.length > 0
-    ){
-
-        const best =
-            boxes.shift();
-
-
-        result.push(best);
-
-
-        boxes =
-            boxes.filter(
-                box =>
-                    iou(
-                        best,
-                        box
-                    ) < threshold
-            );
 
     }
 
 
-    return result;
+    return r;
 
 }
 
 
-// ======================================================
-// IoU
-// ======================================================
+
+
+
+
 
 function iou(a,b){
 
-    const ax1 =
-        a.x - a.w / 2;
 
-    const ay1 =
-        a.y - a.h / 2;
+    let ax1=a.x-a.w/2;
 
-    const ax2 =
-        a.x + a.w / 2;
+    let ay1=a.y-a.h/2;
 
-    const ay2 =
-        a.y + a.h / 2;
+    let ax2=a.x+a.w/2;
+
+    let ay2=a.y+a.h/2;
 
 
-    const bx1 =
-        b.x - b.w / 2;
 
-    const by1 =
-        b.y - b.h / 2;
+    let bx1=b.x-b.w/2;
 
-    const bx2 =
-        b.x + b.w / 2;
+    let by1=b.y-b.h/2;
 
-    const by2 =
-        b.y + b.h / 2;
+    let bx2=b.x+b.w/2;
+
+    let by2=b.y+b.h/2;
 
 
-    const iw =
-        Math.max(
 
-            0,
+    let iw=Math.max(
 
-            Math.min(
-                ax2,
-                bx2
-            )
-            -
-            Math.max(
-                ax1,
-                bx1
-            )
+        0,
 
-        );
-
-
-    const ih =
-        Math.max(
-
-            0,
-
-            Math.min(
-                ay2,
-                by2
-            )
-            -
-            Math.max(
-                ay1,
-                by1
-            )
-
-        );
-
-
-    const intersection =
-        iw * ih;
-
-
-    const union =
-        a.w * a.h
-        +
-        b.w * b.h
+        Math.min(ax2,bx2)
         -
-        intersection;
+        Math.max(ax1,bx1)
 
-
-    if(union <= 0)
-        return 0;
-
-
-    return (
-        intersection /
-        union
     );
 
+
+
+    let ih=Math.max(
+
+        0,
+
+        Math.min(ay2,by2)
+        -
+        Math.max(ay1,by1)
+
+    );
+
+
+
+    let inter=iw*ih;
+
+
+
+    return inter/
+
+    (
+
+        a.w*a.h+
+
+        b.w*b.h-
+
+        inter
+
+    );
+
+
 }
 
-
-// ======================================================
-// FPS
-// ======================================================
-
-function updateFPS(){
-
-    fpsFrameCount++;
-
-
-    const now =
-        performance.now();
-
-
-    const elapsed =
-        now -
-        lastFpsTime;
-
-
-    if(
-        elapsed >= 1000
-    ){
-
-        currentFPS =
-            fpsFrameCount *
-            1000 /
-            elapsed;
-
-
-        fpsFrameCount = 0;
-
-        lastFpsTime = now;
-
-
-        document.getElementById("fps")
-            .innerHTML =
-            "畫面 FPS: "
-            +
-            currentFPS.toFixed(0)
-            +
-            " | AI: "
-            +
-            (
-                inferenceBusy
-                ? "運算中"
-                : "待機"
-            );
-
-    }
-
-}
 
 
 </script>
+
 
 </body>
 
